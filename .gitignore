@@ -7,5 +7,5 @@ data/processed/*
 !data/processed/.gitkeep
 mlruns/
 .env
-*.pt
+#*.pt
 .DS_Store

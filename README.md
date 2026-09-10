@@ -1,26 +1,82 @@
 # Real-Time Manufacturing Defect Inspection System
 
-Detects surface defects (scratches, dents, cracks) on manufactured parts from images,
-served via a REST API with a live inspector dashboard. Built to mirror a real
-production ML deployment, not just a notebook model.
+An end-to-end computer vision system that detects surface defects (scratches,
+cracks, inclusions) on manufactured steel parts, served via a production-style
+REST API and deployed live on AWS. Built to demonstrate the full ML lifecycle
+a Forward Deployed Engineer owns: problem framing, data pipeline, model
+training, deployment, and a client-facing demo — not just a notebook model.
 
-📄 [Design doc](docs/design_doc.md)
+## Live Demo
 
-## Status
-🚧 In progress — Phase 0 (design) complete. Next: data pipeline.
-
-## Quickstart (once built)
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-docker-compose up --build
-# API: http://localhost:8000/docs
-# Dashboard: http://localhost:8501
-```
+- **API**: deployed on AWS ECS Fargate (scaled to zero by default to avoid
+  idle cost — spin up with `aws ecs update-service --desired-count 1`)
+- **Dashboard**: `streamlit run app/streamlit_app.py`, point it at the live API URL
 
 ## Architecture
-See `docs/design_doc.md` section 6 for the diagram.
+
+```mermaid
+flowchart LR
+    A[NEU-DET Dataset] --> B[VOC to YOLO Conversion]
+    B --> C[YOLOv8n Training\nGoogle Colab GPU]
+    C --> D[best.pt weights]
+    D --> E[FastAPI Serving Layer]
+    E --> F[Docker Container]
+    F --> G[AWS ECR]
+    G --> H[AWS ECS Fargate]
+    H --> I[Streamlit Dashboard]
+    E -.structured JSON logs.-> J[CloudWatch-ready logs]
+    H --> K((Public REST API))
+```
+
+## Results
+
+| Metric                  | Value                              |
+| ----------------------- | ---------------------------------- |
+| mAP50 (overall)         | 0.737                              |
+| Precision / Recall      | 0.699 / 0.674                      |
+| Inference latency (CPU) | ~90ms mean (target: <200ms) - PASS |
+
+Per-class recall varies significantly (`patches`/`scratches` ~90%,
+`crazing`/`rolled-in_scale` ~35-55%) — see Known Limitations in
+docs/design_doc.md for why, and what would fix it.
+
+## Tech Stack
+
+Python · YOLOv8 (Ultralytics) · PyTorch · FastAPI · Docker · AWS (ECR, ECS Fargate) ·
+Streamlit · GitHub Actions (CI) · pytest
+
+## Quickstart
+
+```bash
+python -m venv venv && source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+
+# Run the API
+uvicorn src.serving.app:app --port 8000
+# -> http://localhost:8000/docs
+
+# Run the demo dashboard (separate terminal)
+streamlit run app/streamlit_app.py
+
+# Run tests
+pytest tests/ -v
+
+# Build and run in Docker
+docker build -f deployment/Dockerfile -t defect-inspection .
+docker run -p 8000:8000 defect-inspection
+```
 
 ## Project structure
-See root-level folders: `src/` (pipeline code), `app/` (demo UI),
-`deployment/` (Docker + CI/CD), `tests/`, `monitoring/`.
+
+├── docs/design_doc.md # problem framing, tradeoffs, known limitations
+├── data/ # raw + processed dataset (gitignored, see docs)
+├── src/
+│ ├── data/ # VOC->YOLO conversion, exploration
+│ ├── training/ # transfer-learning training script (MLflow tracked)
+│ ├── evaluation/ # latency benchmarking
+│ └── serving/ # FastAPI app (inference, logging)
+├── app/streamlit_app.py # client-facing demo dashboard
+├── deployment/Dockerfile # containerization
+├── tests/ # pytest suite (runs in CI)
+└── .github/workflows/ci.yml # automated test + Docker build on every push
